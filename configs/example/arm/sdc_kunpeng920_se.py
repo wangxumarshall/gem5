@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -24,6 +23,8 @@ from gem5.components.processors.simple_processor import SimpleProcessor
 from gem5.isas import ISA
 from gem5.resources.resource import BinaryResource
 from gem5.simulate.simulator import Simulator
+
+from sdc_fault_request import build_fault_request, write_fault_request
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -117,18 +118,18 @@ def _build_memory(mem_channels: int, mem_size: str):
 def _write_fault_manifest(args: argparse.Namespace) -> Path:
     outdir = Path(m5.options.outdir).resolve()
     manifest_path = outdir / "sdc_fault_request.json"
-    payload = {
-        "fault_model": args.fault_model,
-        "fault_target": args.fault_target,
-        "fault_bit": args.fault_bit,
-        "fault_tick": args.fault_tick,
-        "implemented_in_script": False,
-    }
-    manifest_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    request = build_fault_request(
+        fault_model=args.fault_model,
+        fault_target=args.fault_target,
+        fault_bit=args.fault_bit,
+        fault_tick=args.fault_tick,
+        binary=args.binary,
+        binary_args=args.binary_arg,
+        cpu_type=args.cpu_type,
+        num_cores=args.num_cores,
+        clk_freq=args.clk_freq,
     )
-    return manifest_path
+    return write_fault_request(request, manifest_path)
 
 
 def main() -> None:
