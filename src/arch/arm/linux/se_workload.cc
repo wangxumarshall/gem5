@@ -70,16 +70,8 @@ class LinuxLoader : public Process::Loader
             return nullptr;
         }
 
-        if (opsys == loader::UnknownOpSys) {
-            warn("Unknown operating system; assuming Linux.");
-            opsys = loader::Linux;
-        }
-
-        if (opsys == loader::LinuxArmOABI) {
-            fatal("gem5 does not support ARM OABI binaries. Please recompile "
-                    "with an EABI compiler.");
-        }
-
+        // Only handle known Linux binaries — bare-metal (UnknownOpSys) is handled
+        // by BareMetalLoader in src/arch/arm/bare_metal/workload.cc
         if (opsys != loader::Linux)
             return nullptr;
 

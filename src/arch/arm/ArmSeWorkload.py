@@ -45,7 +45,7 @@ class ArmEmuLinux(ArmSEWorkload):
             "arm64",
             "arm",
             "thumb",
-        ) and obj.get_op_sys() in ("linux", "unknown")
+        ) and obj.get_op_sys() == "linux"
 
 
 class ArmEmuFreebsd(ArmSEWorkload):
@@ -59,3 +59,17 @@ class ArmEmuFreebsd(ArmSEWorkload):
             obj.get_arch() in ("arm64", "arm", "thumb")
             and obj.get_op_sys() == "freebsd"
         )
+
+
+class ArmBareMetalWorkload(SEWorkload):
+    type = "ArmBareMetalWorkload"
+    cxx_header = "arch/arm/bare_metal/workload.hh"
+    cxx_class = "gem5::ArmISA::BareMetalWorkload"
+
+    @classmethod
+    def _is_compatible_with(cls, obj):
+        # Match ARM64/ARM binary only when OS is explicitly "unknown"
+        # (not Linux or other OS). This prevents conflicts with ArmEmuLinux.
+        arch = obj.get_arch()
+        opsys = obj.get_op_sys()
+        return arch in ("arm64", "arm", "thumb") and opsys == "unknown"
