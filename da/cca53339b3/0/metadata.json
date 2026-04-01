@@ -1,0 +1,35 @@
+{
+  "cli_version": "v0.5.0-dev-f46ed4f3",
+  "checkpoint_id": "dacca53339b3",
+  "session_id": "d910793e-44d5-4b76-a978-fb98052552f1",
+  "strategy": "manual-commit",
+  "created_at": "2026-04-01T12:31:39.508229Z",
+  "branch": "stable",
+  "checkpoints_count": 8,
+  "files_touched": [
+    "configs/example/arm/sdc_baremetal_se.py",
+    "src/arch/arm/bare_metal/process.cc"
+  ],
+  "agent": "Claude Code",
+  "model": "MiniMax-M2.5",
+  "turn_id": "c874fb50e214",
+  "token_usage": {
+    "input_tokens": 6318427,
+    "cache_creation_tokens": 11467,
+    "cache_read_tokens": 185250457,
+    "output_tokens": 472544,
+    "api_call_count": 1641
+  },
+  "session_metrics": {
+    "turn_count": 8
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-04-01T12:31:37.940314Z",
+    "agent_lines": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 778,
+    "total_committed": 12,
+    "agent_percentage": 0
+  }
+}

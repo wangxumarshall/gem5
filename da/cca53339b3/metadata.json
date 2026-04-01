@@ -1,0 +1,26 @@
+{
+  "cli_version": "v0.5.0-dev-f46ed4f3",
+  "checkpoint_id": "dacca53339b3",
+  "strategy": "manual-commit",
+  "branch": "stable",
+  "checkpoints_count": 8,
+  "files_touched": [
+    "configs/example/arm/sdc_baremetal_se.py",
+    "src/arch/arm/bare_metal/process.cc"
+  ],
+  "sessions": [
+    {
+      "metadata": "/da/cca53339b3/0/metadata.json",
+      "transcript": "/da/cca53339b3/0/full.jsonl",
+      "content_hash": "/da/cca53339b3/0/content_hash.txt",
+      "prompt": "/da/cca53339b3/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 6318427,
+    "cache_creation_tokens": 11467,
+    "cache_read_tokens": 185250457,
+    "output_tokens": 472544,
+    "api_call_count": 1641
+  }
+}
