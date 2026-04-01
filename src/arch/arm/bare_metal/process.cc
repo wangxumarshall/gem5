@@ -155,9 +155,11 @@ ArmBareMetalProcess64::initState()
     tc->setMiscReg(MISCREG_CPSR, cpsr);
 
     // Enable floating point / NEON for AArch64
+    // CRITICAL: Must set fpen (bits 21:20) to 0x3 for EL0 FP/NEON access
     CPACR cpacr = tc->readMiscReg(MISCREG_CPACR_EL1);
     cpacr.cp10 = 0x3;
     cpacr.cp11 = 0x3;
+    cpacr.fpen = 0x3;  // Enable FP/NEON at EL0 (AArch64)
     cpacr.zen = 0x3;
     tc->setMiscReg(MISCREG_CPACR_EL1, cpacr);
     FPEXC fpexc = tc->readMiscReg(MISCREG_FPEXC);

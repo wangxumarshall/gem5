@@ -77,8 +77,16 @@ def main() -> None:
 
     system.mem_ranges = [AddrRange(start=0, size=args.mem_size)]
 
-    MemConfig.config_mem(args, system)
-    system.connect()
+    # Create SimpleMemory for bare-metal execution
+    # This populates System's memories list which is used by physmem
+    # SEWorkload::setSystem() calls getPhysMem().getConfAddrRanges()
+    system.simple_mem = SimpleMemory(
+        range=system.mem_ranges[0],
+        latency="30ns",
+        bandwidth="12.8GiB/s",
+    )
+    system.simple_mem.port = system.membus.mem_side_ports
+    system.memories = [system.simple_mem]
 
     # Bare-metal workload
     binary_path = str(args.binary.resolve())
