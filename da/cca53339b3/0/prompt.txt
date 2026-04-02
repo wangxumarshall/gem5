@@ -61,3 +61,7 @@
 <status>completed</status>
 <summary>Background command "Test bare-metal ELF with simplified fix" completed (exit code 0)</summary>
 </task-notification>
+
+---
+
+提交代码，git message不能有claude信息，项目中的所有修改都提交push到远程仓；然后批量生成arm64指令流，再按计划继续工作
