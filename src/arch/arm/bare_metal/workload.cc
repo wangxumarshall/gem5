@@ -60,6 +60,12 @@ BareMetalWorkload::initState()
     // Set PC via ArmPCState
     ArmISA::PCState pc;
     pc.pc(entry);
+    // FIX: Set AArch64 bit for ARM64 bare-metal binaries so the decoder
+    // dispatches to AArch64 decode path (case 0x1: in the AARCH64 switch).
+    // ArmBareMetalProcess64::initState() skips ArmProcess64::initState()
+    // which normally sets this bit, so we must set it here.
+    pc.aarch64(dynamic_cast<ArmBareMetalProcess64 *>(proc) != nullptr);
+    pc.nextAArch64(pc.aarch64());
     tc->pcState(pc);
 
     // Activate first thread, suspend others

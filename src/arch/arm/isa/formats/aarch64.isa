@@ -36,6 +36,9 @@
 output header {{
 namespace Aarch64
 {
+    // DEBUG: forward declaration to track which function handles an instruction
+    StaticInstPtr decodeFpDataProc2Source_track(ExtMachInst machInst);
+
     StaticInstPtr decodeDataProcImm(ExtMachInst machInst);
     StaticInstPtr decodeBranchExcSys(const Decoder &dec, ExtMachInst machInst);
     StaticInstPtr decodeLoadsStores(ExtMachInst machInst);
@@ -3091,6 +3094,9 @@ namespace Aarch64
     StaticInstPtr
     decodeFpDataProc2Source(ExtMachInst machInst)
     {
+        fprintf(stderr, "DEBUG decodeFpDataProc2Source: machInst=0x%llx\n",
+                (unsigned long long)machInst);
+        fflush(stderr);
         if (bits(machInst, 31) ||
                 bits(machInst, 29)) {
             return new Unknown64(machInst);
@@ -3678,8 +3684,8 @@ output decoder {{
         31, 10,
         'X','0','X','1', // op0
         '1','1','1',
-        '0','X', // op1
-        'X','0','X','X', // op2
+        '0','0', // op1: bits27:26=00 (bit25=0), bit24:23=00 (bit24=0, bit23=0)
+        '1','X','X','X', // op2: bit22=1, bits21:19=XXX
         'X','X','X','X','X','X','X','X','X'>(); // op3
 
     inline constexpr auto isConvFloatPInt = bitPatternMatcher<
@@ -3691,13 +3697,27 @@ output decoder {{
         'X','1','X','X', // op2
         'X','X','X','0','0','0','0','0','0'>(); // op3
 
+    // FMLA/FMLS: 31:24=00011110, 23:22=00, 21=1, bit15=0
+    // These are reserved in scalar FP space; they are actually AdvSIMD
+    // scalar three-same.  Catch them before isFpDataProc2Source.
+    inline constexpr auto isFpMulMadd = bitPatternMatcher<
+        MachInst,
+        31, 10,
+        '0','0','0','1', // op0: bits31:28=0001
+        '1','X','X',
+        '0','0',         // op1: bits27=1, bits26:25=XX (11 for FMLS/FMLA),
+                         //       bit24=0, bit23=0
+        '0','X','X','X', // op2: bit22=0, bits21:20=XX
+        'X','X','X','X', // op3: bits19:16=XXXX
+        'X','X','X','X','X'>(); // op3: bits15:10=XXXXX
+
     inline constexpr auto isFpDataProc1Source = bitPatternMatcher<
         MachInst,
         31, 10,
         'X','0','X','1', // op0
         '1','1','1',
         '0','X', // op1
-        'X','1','X','X', // op2
+        '1','X','X','X', // op2: bit22=1 (excludes FMLA/FMLS which have bit22=0)
         'X','X','X','X','1','0','0','0','0'>(); // op3
 
     inline constexpr auto isFpCompare = bitPatternMatcher<
@@ -3763,6 +3783,9 @@ namespace Aarch64
     StaticInstPtr
     decodeFpAdvSIMD(ExtMachInst machInst)
     {
+        fprintf(stderr, "DEBUG decodeFpAdvSIMD: machInst=0x%llx, upper32=0x%08x\n",
+                (unsigned long long)machInst, (unsigned)((machInst >> 32) & 0xFFFFFFFF));
+        fflush(stderr);
         if (isCryptoAES(machInst)) return decodeCryptoAES(machInst);
         if (isCrypto3SHA(machInst)) return decodeCryptoThreeRegSHA(machInst);
         if (isCrypto2SHA(machInst)) return decodeCryptoTwoRegSHA(machInst);
@@ -3792,6 +3815,16 @@ namespace Aarch64
         if (isAdvSIMDIndexedElem(machInst)) return decodeNeonIndexedElem<DecoderFeatures>(machInst);
         if (isConvFloatPFixedP(machInst)) return decodeFpConvFixed(machInst);
         if (isConvFloatPInt(machInst)) return decodeFpConvFp(machInst);
+        // FMLS/FMLA: 31:28=0x1, 27:25=0b111, 24=0, 23=0, 22=0, 21=1
+        // These are AdvSIMD scalar three-same FP instructions reserved in
+        // scalar FP space.  Route to decodeFpMulMadd for proper handling.
+        if (bits(machInst, 31, 28) == 0x1 &&
+            bits(machInst, 27, 25) == 0x7 &&
+            bits(machInst, 24) == 0 &&
+            bits(machInst, 23) == 0 &&
+            bits(machInst, 22) == 0 &&
+            bits(machInst, 21) == 1)
+            return decodeFpMulMadd(machInst);
         if (isFpDataProc1Source(machInst)) return decodeFpDataProc1Source(machInst);
         if (isFpCompare(machInst)) return decodeFpCompare(machInst);
         if (isFpImmediate(machInst)) return decodeFpImmediate(machInst);

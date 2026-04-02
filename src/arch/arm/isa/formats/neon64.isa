@@ -91,12 +91,69 @@ namespace Aarch64
 
     // AdvSIMD load/store
     inline StaticInstPtr decodeNeonMem(ExtMachInst machInst);
+
+    // FMLA/FMLS: scalar three-same FP (bit21=1, bit15=1)
+    // These have the same encoding as AdvSIMD scalar three-same but with
+    // bit21=1.  Handle them separately so they don't get misrouted to the
+    // scalar FP data-processing decoder.
+    inline StaticInstPtr decodeFpMulMadd(ExtMachInst machInst);
 }
 }};
 
 output decoder {{
 namespace Aarch64
 {
+    // FMLA/FMLS: 31:24=00011110, 23:22=00, 21=1, bit15=0, opcode in bits14:10
+    // These are reserved in scalar FP space but are valid AdvSIMD scalar
+    // three-same instructions.  Dispatch based on the 5-bit opcode:
+    // FMLS=0x04, FMLA=0x0B (opcode & 1: 0=FMLS, 1=FMLA).
+    StaticInstPtr
+    decodeFpMulMadd(ExtMachInst machInst)
+    {
+        // DEBUG: log when this function is called
+        fprintf(stderr, "DEBUG decodeFpMulMadd called: machInst=0x%llx\n", (unsigned long long)machInst);
+        uint32_t inst32 = (uint32_t)(machInst & 0xFFFFFFFF);
+        fprintf(stderr, "DEBUG: inst32=0x%08x, bits31:28=0x%x, bits27:24=0x%x, bits23:22=0x%x\n",
+                inst32, (inst32 >> 28) & 0xF, (inst32 >> 24) & 0xF, (inst32 >> 22) & 0x3);
+
+        uint8_t q      = bits(machInst, 30);
+        uint8_t size   = bits(machInst, 23, 22);
+        // 5-bit opcode: bits(14,10).  FMLS=0x04 (bit1=0), FMLA=0x0B (bit1=1).
+        uint8_t opcode = bits(machInst, 14, 10);
+
+        RegIndex vd = (RegIndex)(uint8_t)bits(machInst, 4, 0);
+        RegIndex vn = (RegIndex)(uint8_t)bits(machInst, 9, 5);
+        RegIndex vm = (RegIndex)(uint8_t)bits(machInst, 20, 16);
+
+        // opcode & 1: 0=FMLS, 1=FMLA
+        // For FMLS only 16-bit elements are valid; 32/64-bit return Unknown.
+        switch (size) {
+          case 0: // 16-bit elements (half-precision)
+            if (opcode & 1) { // FMLA
+                if (q)
+                    return new FmlaQX<uint16_t>(machInst, vd, vn, vm);
+                else
+                    return new FmlaDX<uint16_t>(machInst, vd, vn, vm);
+            } else { // FMLS
+                if (q)
+                    return new FmlsQX<uint16_t>(machInst, vd, vn, vm);
+                else
+                    return new FmlsDX<uint16_t>(machInst, vd, vn, vm);
+            }
+          case 1: // 32-bit elements (single-precision)
+            // FMLS is not defined for single-precision scalar; only FMLA.
+            if (opcode & 1) { // FMLA
+                if (q)
+                    return new FmlaQX<uint32_t>(machInst, vd, vn, vm);
+                else
+                    return new FmlaDX<uint32_t>(machInst, vd, vn, vm);
+            }
+            return new Unknown64(machInst);
+          default:
+            return new Unknown64(machInst);
+        }
+    }
+
     StaticInstPtr
     decodeNeon3SameFp16(ExtMachInst machInst)
     {

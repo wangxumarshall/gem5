@@ -775,8 +775,11 @@ UndefinedInstruction::invoke(ThreadContext *tc, const StaticInstPtr &inst)
     }
 
     // If the mnemonic isn't defined this has to be an unknown instruction.
-    assert(unknown || mnemonic != NULL);
     auto arm_inst = static_cast<ArmStaticInst *>(inst.get());
+    fprintf(stderr, "DBG UndefinedInstruction::invoke: unknown=%d enc=0x%08llx\n",
+            (int)unknown, (unsigned long long)arm_inst->encoding());
+    fflush(stderr);
+    assert(unknown || mnemonic != NULL);
     if (disabled) {
         panic("Attempted to execute disabled instruction "
                 "'%s' (inst 0x%08x)", mnemonic, arm_inst->encoding());

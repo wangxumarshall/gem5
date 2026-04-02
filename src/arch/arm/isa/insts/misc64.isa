@@ -180,6 +180,8 @@ let {{
     subst("RegRegRegImmOp64", extrIop);
 
     unknownCode = '''
+            fprintf(stderr, "DEBUG Unknown64::execute machInst=0x%llx\\n",
+                    (unsigned long long)machInst);
             return std::make_shared<UndefinedInstruction>(machInst, true);
     '''
     unknown64Iop = ArmInstObjParams("unknown", "Unknown64", "UnknownOp64",
