@@ -43,10 +43,12 @@
 
 #include "cpu/base.hh"
 
+#include <cctype>
 #include <iostream>
 #include <sstream>
 #include <string>
 
+#include "arch/arm/regs/int.hh"
 #include "arch/generic/decoder.hh"
 #include "arch/generic/isa.hh"
 #include "arch/generic/tlb.hh"
@@ -75,6 +77,38 @@
 
 namespace gem5
 {
+
+namespace
+{
+
+RegId
+resolveArmIntReg(const std::string &reg_name)
+{
+    std::string normalized;
+    normalized.reserve(reg_name.size());
+    for (char c : reg_name) {
+        normalized.push_back(static_cast<char>(std::tolower(
+            static_cast<unsigned char>(c))));
+    }
+
+    if (normalized == "sp") {
+        return ArmISA::int_reg::Spx;
+    }
+
+    if (normalized.size() >= 2 && normalized[0] == 'x') {
+        const auto index_str = normalized.substr(1);
+        if (!index_str.empty()) {
+            const auto index = std::stoi(index_str);
+            if (index >= 0 && index <= 30) {
+                return ArmISA::int_reg::x(index);
+            }
+        }
+    }
+
+    panic("Unsupported ARM register name for fault injection: %s", reg_name);
+}
+
+} // anonymous namespace
 
 std::unique_ptr<BaseCPU::GlobalStats> BaseCPU::globalStats;
 
@@ -783,6 +817,38 @@ Tick
 BaseCPU::getCurrentInstCount(ThreadID tid)
 {
     return threadContexts[tid]->getCurrentInstCount();
+}
+
+uint64_t
+BaseCPU::readArmIntRegisterByName(ThreadID tid,
+                                  const std::string &reg_name) const
+{
+    panic_if(tid >= threadContexts.size(),
+             "Invalid thread id %d for ARM register read", tid);
+    ThreadContext *tc = threadContexts[tid];
+    panic_if(tc == nullptr, "Null thread context for id %d", tid);
+
+    const RegId reg = resolveArmIntReg(reg_name);
+    return static_cast<uint64_t>(tc->getReg(reg));
+}
+
+uint64_t
+BaseCPU::injectArmIntRegisterBitFlip(ThreadID tid,
+                                     const std::string &reg_name,
+                                     unsigned bit_index)
+{
+    panic_if(tid >= threadContexts.size(),
+             "Invalid thread id %d for fault injection", tid);
+    panic_if(bit_index >= 64,
+             "Invalid bit index %u for 64-bit ARM register", bit_index);
+    ThreadContext *tc = threadContexts[tid];
+    panic_if(tc == nullptr, "Null thread context for id %d", tid);
+
+    const RegId reg = resolveArmIntReg(reg_name);
+    const uint64_t current = static_cast<uint64_t>(tc->getReg(reg));
+    const uint64_t updated = current ^ (uint64_t(1) << bit_index);
+    tc->setReg(reg, updated);
+    return updated;
 }
 
 AddressMonitor::AddressMonitor()

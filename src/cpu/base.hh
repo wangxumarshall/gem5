@@ -509,6 +509,22 @@ class BaseCPU : public ClockedObject
      */
     uint64_t getCurrentInstCount(ThreadID tid);
 
+    /**
+     * Read an ARM integer register by user-facing name from a specific thread.
+     * This is intended for Python-side fault injection control.
+     */
+    uint64_t readArmIntRegisterByName(ThreadID tid,
+                                      const std::string &reg_name) const;
+
+    /**
+     * Flip a bit in an ARM integer register for a specific thread.
+     *
+     * @return The register value after the bit flip.
+     */
+    uint64_t injectArmIntRegisterBitFlip(ThreadID tid,
+                                         const std::string &reg_name,
+                                         unsigned bit_index);
+
   public:
     /**
      * @{

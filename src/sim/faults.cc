@@ -99,6 +99,26 @@ GenericPageTableFault::invoke(ThreadContext *tc, const StaticInstPtr &inst)
     if (!FullSystem) {
         Process *p = tc->getProcessPtr();
         handled = p->fixupFault(vaddr);
+
+        // For bare-metal processes (ArmBareMetalProcess64/32), handle
+        // address faults in the valid physical-memory range [0, 0x80000000)
+        // by identity-mapping pages on demand.  This covers literal pools,
+        // GOT entries, and NOBITS (BSS) padding that fall on page boundaries
+        // not pre-mapped during initState().
+        if (!handled) {
+            const Addr bm_base  = 0x0;
+            const Addr bm_limit = 0x80000000ULL;
+            if (vaddr >= bm_base && vaddr < bm_limit) {
+                Addr page_bytes  = p->pTable->pageSize();
+                Addr vpage_start = roundDown(vaddr, page_bytes);
+                // Identity-map: vaddr == paddr (bare-metal physical address)
+                p->pTable->map(vpage_start, vpage_start, page_bytes,
+                               EmulationPageTable::Clobber);
+                DPRINTF(Faults, "BareMetal on-demand map: vaddr=0x%llx\n",
+                        (unsigned long long)vpage_start);
+                handled = true;
+            }
+        }
     }
     panic_if(!handled &&
             !tc->getSystemPtr()->trapToGdb(GDBSignal::SEGV, tc->contextId()),

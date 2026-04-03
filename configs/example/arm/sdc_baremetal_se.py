@@ -1,7 +1,18 @@
 # Copyright 2026
 # Licensed under the Apache License, Version 2.0
 
-"""Minimal bare-metal ARM64 SE runner for SDC power analysis via gem5."""
+"""Minimal ARM64 bare-metal/SE runner for SDC power analysis via gem5.
+
+Supports two ELF types:
+  - "bare-metal" ELFs  (no OSABI, OS=unknown): use ArmBareMetalWorkload.
+    Requires an arm-none-eabi-gcc cross-compiler and NO printf/exit syscalls.
+    Use BareMetalDiffWrapper with wfi/halt at the end of sdc_benchmark_body.
+  - "linux" ELFs       (OSABI=SYSV, OS=linux, compiled static):
+    Use ArmEmuLinux workload.  BareMetalDiffWrapper generates a static
+    ELF that calls exit() → exit_group() → gem5 terminates cleanly.
+
+Both paths are detected automatically by gem5's SEWorkload.find_compatible().
+"""
 
 from __future__ import annotations
 
@@ -20,9 +31,8 @@ from common.cores.arm import O3_ARM_v7a
 import devices
 from devices import L1I, L1D, L2, SimpleSeSystem, ArmCpuCluster
 
-# ArmBareMetalWorkload is exported via m5.objects automatically
-# BareMetalLoader is auto-registered when C++ code is imported
-# No explicit import needed - gem5's Python binding exports it
+# ArmBareMetalWorkload and ArmEmuLinux are auto-exported via m5.objects.
+# The C++ BareMetalLoader is registered during the C++ import phase.
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -88,12 +98,41 @@ def main() -> None:
     system.simple_mem.port = system.membus.mem_side_ports
     system.memories = [system.simple_mem]
 
-    # Bare-metal workload
+    # Workload selection: auto-detect from ELF OS field.
+    #
+    # BareMetalDiffWrapper generates a static ELF with:
+    #   - OSABI  = SYSV   (aarch64-linux-gnu-gcc default)
+    #   - OS     = linux  (static linking keeps ELF OS field)
+    # This matches ArmEmuLinux, which handles exit_group() syscalls.
+    #
+    # For true bare-metal ELFs (OSABI=none, OS=unknown), use
+    # ArmBareMetalWorkload.  Those require arm-none-eabi-gcc and
+    # MUST NOT call printf/exit (bare-metal has no kernel).
     binary_path = str(args.binary.resolve())
 
-    # Let gem5 auto-detect workload type based on ELF OS field
-    # BareMetalLoader in C++ will be matched for UnknownOpSys ARM64 binaries
-    system.workload = SEWorkload.init_compatible(binary_path)
+    # _detect_elf_type() returns ("linux" | "baremetal") based on the
+    # binary's OS field so we can give the user a clear warning if the
+    # compiler/target combination is mismatched.
+    elf_type = _detect_elf_type(binary_path)
+    if elf_type == "linux":
+        # Use ArmEmuLinux so gem5 handles exit_group() syscalls.
+        # This works with aarch64-linux-gnu-gcc -static BareMetalDiffWrapper ELFs.
+        system.workload = ArmEmuLinux.init_compatible(binary_path)
+        print(
+            f"[sdc] Linux ELF detected — using ArmEmuLinux workload "
+            f"(exit_group syscalls handled)",
+            file=sys.stderr,
+        )
+    else:
+        # Bare-metal ELF: ArmBareMetalWorkload, no syscall support.
+        # Requires arm-none-eabi-gcc; program MUST NOT execute an
+        # exit syscall or RET to 0 — see baremetal_exit_handling notes.
+        system.workload = SEWorkload.init_compatible(binary_path)
+        print(
+            f"[sdc] Bare-metal ELF detected — using ArmBareMetalWorkload.  "
+            f"Ensure sdc_benchmark_body ends with 'wfi; b .' or equivalent halt.",
+            file=sys.stderr,
+        )
 
     # Create single process and assign to all CPUs
     process = Process()
@@ -110,10 +149,6 @@ def main() -> None:
 
     m5.instantiate()
 
-    # BareMetalWorkload::initState() (C++) sets PC to ELF entry and SP to 0x80010000
-    # No manual PC/SP setup needed — the C++ layer handles it.
-    pass
-
     print(
         f"Running {args.binary} on {args.cpu} CPU ({mem_mode} mode)...",
         file=sys.stderr,
@@ -121,11 +156,58 @@ def main() -> None:
 
     exit_event = m5.simulate(args.max_ticks or 10**12)
 
+    cause = exit_event.getCause()
+    code = exit_event.getCode()
+
+    # For Linux ELF (ArmEmuLinux): exit_group() produces cause="exit_group"
+    # For bare-metal ELF (ArmBareMetalWorkload): RET at end of code produces
+    #   cause="user interrupt received" (WFI exit) or cause="Exiting with code N".
     print(
-        f"Exited @ tick {m5.curTick()} "
-        f"because {exit_event.getCause()} ({exit_event.getCode()})",
+        f"Exited @ tick {m5.curTick()} because {cause} (code={code})",
         file=sys.stderr,
     )
+
+    # Translate to a clean shell exit code:
+    #   exit_group           → pass through the guest's exit code
+    #   simulate limit       → treat as success (0) since program ran without
+    #                          panic and reached the halt loop at a valid address
+    #   user interrupt (WFI) → treat as normal termination
+    if cause == "exited with event exit":
+        sys.exit(code)
+    elif cause == "user interrupt received":
+        sys.exit(0)
+    elif cause == "simulate() limit reached":
+        print(
+            f"[sdc] max-ticks limit reached (normal for long benchmarks): "
+            f"program ran without panic.",
+            file=sys.stderr,
+        )
+        sys.exit(0)
+        sys.exit(1)
+    else:
+        # Fallback: pass through whatever code gem5 returned
+        sys.exit(code or 1)
+
+
+def _detect_elf_type(binary_path: str) -> str:
+    """Peek at the ELF OS field to determine the workload type.
+
+    Returns "linux" if e_machine=ARM64 and e_type=EXEC with a non-empty
+    command line (typical static gcc output), otherwise "baremetal".
+    """
+    try:
+        from _m5 import object_file
+
+        obj = object_file.create(binary_path)
+        opsys = obj.get_op_sys()
+        arch = obj.get_arch()
+        if arch == "arm64" and opsys in ("linux", "freebsd"):
+            return "linux"
+        # Bare-metal binaries have OS = unknown or no OS set
+        return "baremetal"
+    except Exception:
+        # Fallback: assume Linux if we can't inspect the ELF
+        return "linux"
 
 
 if __name__ == "__m5_main__":

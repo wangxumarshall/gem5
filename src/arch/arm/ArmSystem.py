@@ -354,6 +354,10 @@ class ArmSystem(System):
     type = "ArmSystem"
     cxx_header = "arch/arm/system.hh"
     cxx_class = "gem5::ArmSystem"
+    cxx_exports = System.cxx_exports + [
+        PyBindMethod("readIntRegisterByName"),
+        PyBindMethod("injectIntRegisterBitFlip"),
+    ]
 
     release = Param.ArmRelease(ArmDefaultRelease(), "Arm Release")
 

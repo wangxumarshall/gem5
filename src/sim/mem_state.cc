@@ -386,6 +386,7 @@ MemState::remapRegion(Addr start_addr, Addr new_start_addr, Addr length)
 bool
 MemState::fixupFault(Addr vaddr)
 {
+{
     /**
      * Check if we are accessing a mapped virtual address. If so then we
      * just haven't allocated it a physical page yet and can do so here.

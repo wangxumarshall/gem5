@@ -72,6 +72,8 @@ class BaseCPU(ClockedObject):
         PyBindMethod("getCurrentInstCount"),
         PyBindMethod("scheduleSimpointsInstStop"),
         PyBindMethod("scheduleInstStopAnyThread"),
+        PyBindMethod("readArmIntRegisterByName"),
+        PyBindMethod("injectArmIntRegisterBitFlip"),
     ]
 
     @classmethod

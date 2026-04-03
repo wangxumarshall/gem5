@@ -27,6 +27,31 @@ from gem5.simulate.simulator import Simulator
 from sdc_fault_request import build_fault_request, write_fault_request
 
 
+def _parse_fault_target(raw_target: str) -> tuple[int, str]:
+    value = raw_target.strip()
+    if not value:
+        return 0, ""
+    if ":" not in value:
+        return 0, value
+    prefix, register = value.split(":", 1)
+    prefix = prefix.strip().lower()
+    register = register.strip()
+    if prefix.startswith("cpu"):
+        return int(prefix[3:]), register
+    return 0, value
+
+
+def _supports_scripted_fault_injection(args: argparse.Namespace) -> bool:
+    cpu_index, register_name = _parse_fault_target(args.fault_target)
+    return (
+        args.fault_model == "register_bit_flip"
+        and args.fault_bit is not None
+        and args.fault_tick is not None
+        and register_name != ""
+        and cpu_index < args.num_cores
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -123,6 +148,7 @@ def _write_fault_manifest(args: argparse.Namespace) -> Path:
         fault_target=args.fault_target,
         fault_bit=args.fault_bit,
         fault_tick=args.fault_tick,
+        implemented_in_script=_supports_scripted_fault_injection(args),
         binary=args.binary,
         binary_args=args.binary_arg,
         cpu_type=args.cpu_type,
@@ -171,16 +197,62 @@ def main() -> None:
     if args.fault_model != "none":
         print(
             "[sdc] fault metadata recorded at %s; "
-            "an external injector must consume this request."
-            % fault_manifest,
+            "%s"
+            % (
+                fault_manifest,
+                "scripted injector will consume this request."
+                if _supports_scripted_fault_injection(args)
+                else "an external injector must consume this request.",
+            ),
             file=sys.stderr,
         )
 
     simulator = Simulator(board=board)
-    simulator.run(max_ticks=args.max_ticks)
+    if not _supports_scripted_fault_injection(args):
+        simulator.run(max_ticks=args.max_ticks)
+        print(
+            "Exiting @ tick {} because {}.".format(
+                simulator.get_current_tick(), simulator.get_last_exit_event_cause()
+            )
+        )
+        return
+
+    simulator._instantiate()
+    cpu_index, register_name = _parse_fault_target(args.fault_target)
+    cpu = board.get_processor().get_cores()[cpu_index].get_simobject()
+
+    if args.fault_tick is None or args.fault_bit is None:
+        raise RuntimeError("Scripted fault injection requires fault_tick and fault_bit.")
+
+    injection_tick = int(args.fault_tick)
+    if injection_tick > 0:
+        event = m5.simulate(injection_tick)
+        cause = event.getCause()
+        if cause != "simulate() limit reached":
+            print(
+                "[sdc] simulation exited before scheduled fault injection: "
+                f"{cause} @ tick {m5.curTick()}",
+                file=sys.stderr,
+            )
+            print(f"Exiting @ tick {m5.curTick()} because {cause}.")
+            return
+
+    old_value = cpu.readArmIntRegisterByName(0, register_name)
+    new_value = cpu.injectArmIntRegisterBitFlip(0, register_name, args.fault_bit)
+    print(
+        "[sdc] injected register bit flip: "
+        f"cpu={cpu_index} reg={register_name} bit={args.fault_bit} "
+        f"old=0x{old_value:016x} new=0x{new_value:016x} tick={m5.curTick()}",
+        file=sys.stderr,
+    )
+
+    remaining = None
+    if args.max_ticks is not None:
+        remaining = max(int(args.max_ticks) - m5.curTick(), 0)
+    exit_event = m5.simulate(remaining if remaining is not None else m5.MaxTick)
     print(
         "Exiting @ tick {} because {}.".format(
-            simulator.get_current_tick(), simulator.get_last_exit_event_cause()
+            m5.curTick(), exit_event.getCause()
         )
     )
 

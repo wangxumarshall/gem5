@@ -27,12 +27,16 @@
 
 #include "arch/arm/bare_metal/process.hh"
 
+#include <algorithm>
+
 #include "arch/arm/page_size.hh"
+#include "arch/arm/process.hh"
 #include "arch/arm/regs/int.hh"
 #include "arch/arm/regs/misc.hh"
 #include "base/loader/object_file.hh"
 #include "base/types.hh"
 #include "cpu/thread_context.hh"
+#include "mem/se_translating_port_proxy.hh"
 #include "sim/process.hh"
 #include "sim/system.hh"
 #include "sim/mem_state.hh"
@@ -117,9 +121,9 @@ ArmBareMetalProcess32::armHwcapImpl2() const
 ArmBareMetalProcess64::ArmBareMetalProcess64(
         const ProcessParams &params,
         loader::ObjectFile *objFile, loader::Arch _arch)
-    : ArmProcess64(params, objFile, _arch)
+    : ArmProcess(params, objFile, _arch)
 {
-    // For bare-metal: stack at 0x80000000 (2GB), 64KB — within physical mem
+    // Bare-metal: stack at 0x80000000 (top 2GB), 64KB
     Addr brk_point = roundUp(image.maxAddr(), PageBytes);
     Addr stack_base = 0x80000000L;
     Addr max_stack_size = 0x10000; // 64KB
@@ -135,42 +139,74 @@ void
 ArmBareMetalProcess64::initState()
 {
     ThreadContext *tc = system->threads[contextIds[0]];
+    const Addr page_size = pTable->pageSize();
+    Addr entry = objFile->entryPoint();
 
-    // Map the entire 4GB virtual space BEFORE ELF loading with clobber.
-    // This ensures all pages have valid physical backing.
-    allocateMem(0x0L, 0x100000000L, true);
+    // ================================================================
+    // Bare-metal ELF initialization (extends ArmProcess directly).
+    //
+    // We bypass ArmProcess64/ArmLinuxProcess64 because argsInit() sets
+    // up Linux-style virtual addresses (stack_base = 0x7fffff0000) which are
+    // incompatible with bare-metal ELFs that use physical addresses
+    // (e.g., entry = 0x4004f0, data = 0x4105a0).
+    //
+    // Bare-metal memory layout:
+    //   Code/data segments: physical load address from ELF (0x400000+)
+    //   Stack:              0x80000000 (top 2GB of 4GB physical mem)
+    //   CPU page table:     identity-maps both segments and stack
+    //
+    // SETranslatingPortProxy must be able to write via the page table
+    // (for BSS zeroing), so we map BEFORE calling Process::initState().
+    // ================================================================
 
-    // Call Process::initState() directly to load ELF into memory
-    // SKIP ArmProcess64::initState() which calls argsInit() that tries to
-    // write argc/argv to Linux stack at 0x7ffff000 — this causes memState errors
+    // Map all ELF segments identity-mapped (vaddr == paddr).
+    // For bare-metal ELFs, segments may include NOBITS (uninitialized BSS)
+    // padding between file-backed data and BSS.  elf_object.cc sets
+    // seg.size = p_filesz (not p_memsz), so we must iterate to find the
+    // segment with the highest end address (seg.base + seg.size) to cover
+    // the full extent including BSS.  Otherwise pages in the NOBITS gap are
+    // unmapped and cause page faults when accessed as BSS.
+    Addr min_seg_start = 0;
+    Addr max_seg_end = 0;
+    for (const auto &seg : image.segments()) {
+        if (seg.size == 0)
+            continue;
+        min_seg_start = min_seg_start ? std::min(min_seg_start, seg.base)
+                                      : seg.base;
+        max_seg_end = std::max(max_seg_end, seg.base + seg.size);
+    }
+    if (max_seg_end > min_seg_start) {
+        Addr page_start = roundDown(min_seg_start, page_size);
+        Addr page_end   = roundUp(max_seg_end, page_size);
+        Addr map_size = page_end - page_start;
+        pTable->map(page_start, page_start, map_size,
+                    EmulationPageTable::Clobber);
+    }
+
+    // Map the stack region (64KB at top of 2GB bare-metal memory area).
+    Addr stack_base = 0x80000000L;
+    Addr max_stack_size = 0x10000;
+    pTable->map(stack_base, stack_base, max_stack_size,
+                EmulationPageTable::Clobber);
+
+    // Call Process::initState() to load the ELF via SETranslatingPortProxy.
     Process::initState();
 
-    // Set SP to top of 64KB stack at 0x80010000
-    Addr stack_top = 0x80010000L;
+    // Set SP to top of 64KB stack minus 16-byte alignment.
+    Addr stack_top = stack_base + max_stack_size - 16;
     tc->setReg(int_reg::Sp0, stack_top);
 
-    // Set CPSR for EL0 (user mode, AArch64)
+    // Set PC to the bare-metal ELF entry point.
+    ArmISA::PCState pc;
+    pc.pc(entry);
+    pc.aarch64(true);
+    pc.nextAArch64(true);
+    tc->pcState(pc);
+
+    // Set CPSR to AArch64 EL0 (matching what ArmProcess64::initState does).
     CPSR cpsr = tc->readMiscReg(MISCREG_CPSR);
     cpsr.mode = MODE_EL0T;
     tc->setMiscReg(MISCREG_CPSR, cpsr);
-
-    // Enable floating point / NEON for AArch64
-    // CRITICAL: Must set fpen (bits 21:20) to 0x3 for EL0 FP/NEON access
-    CPACR cpacr = tc->readMiscReg(MISCREG_CPACR_EL1);
-    cpacr.cp10 = 0x3;
-    cpacr.cp11 = 0x3;
-    cpacr.fpen = 0x3;  // Enable FP/NEON at EL0 (AArch64)
-    cpacr.zen = 0x3;
-    tc->setMiscReg(MISCREG_CPACR_EL1, cpacr);
-    FPEXC fpexc = tc->readMiscReg(MISCREG_FPEXC);
-    fpexc.en = 1;
-    tc->setMiscReg(MISCREG_FPEXC, fpexc);
-
-    // Activate thread 0, suspend others
-    tc->activate();
-    for (size_t i = 1; i < contextIds.size(); ++i) {
-        system->threads[contextIds[i]]->suspend();
-    }
 }
 
 uint32_t

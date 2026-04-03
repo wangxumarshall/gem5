@@ -40,8 +40,10 @@
 
 #include "arch/arm/system.hh"
 
+#include <cctype>
 #include <iostream>
 
+#include "arch/arm/regs/int.hh"
 #include "arch/arm/fs_workload.hh"
 #include "arch/arm/semihosting.hh"
 #include "base/loader/object_file.hh"
@@ -58,6 +60,38 @@ namespace gem5
 
 using namespace linux;
 using namespace ArmISA;
+
+namespace
+{
+
+RegId
+resolveArmIntReg(const std::string &reg_name)
+{
+    std::string normalized;
+    normalized.reserve(reg_name.size());
+    for (char c : reg_name) {
+        normalized.push_back(static_cast<char>(std::tolower(
+            static_cast<unsigned char>(c))));
+    }
+
+    if (normalized == "sp") {
+        return int_reg::Spx;
+    }
+
+    if (normalized.size() >= 2 && normalized[0] == 'x') {
+        const auto index_str = normalized.substr(1);
+        if (!index_str.empty()) {
+            const auto index = std::stoi(index_str);
+            if (index >= 0 && index <= 30) {
+                return int_reg::x(index);
+            }
+        }
+    }
+
+    panic("Unsupported ARM register name for fault injection: %s", reg_name);
+}
+
+} // anonymous namespace
 
 ArmRelease::ArmRelease(const ArmReleaseParams &p)
   : SimObject(p)
@@ -225,6 +259,38 @@ ArmSystem::callClearWakeRequest(ThreadContext *tc)
 {
     if (FVPBasePwrCtrl *pwr_ctrl = getArmSystem(tc)->getPowerController())
         pwr_ctrl->clearWakeRequest(tc);
+}
+
+uint64_t
+ArmSystem::readIntRegisterByName(ContextID context_id,
+                                 const std::string &reg_name) const
+{
+    panic_if(context_id >= threads.size(),
+             "Invalid context id %d for register read", context_id);
+    ThreadContext *tc = threads[context_id];
+    panic_if(tc == nullptr, "Null thread context for id %d", context_id);
+
+    const RegId reg = resolveArmIntReg(reg_name);
+    return static_cast<uint64_t>(tc->getReg(reg));
+}
+
+uint64_t
+ArmSystem::injectIntRegisterBitFlip(ContextID context_id,
+                                    const std::string &reg_name,
+                                    unsigned bit_index)
+{
+    panic_if(context_id >= threads.size(),
+             "Invalid context id %d for fault injection", context_id);
+    panic_if(bit_index >= 64,
+             "Invalid bit index %u for 64-bit ARM register", bit_index);
+    ThreadContext *tc = threads[context_id];
+    panic_if(tc == nullptr, "Null thread context for id %d", context_id);
+
+    const RegId reg = resolveArmIntReg(reg_name);
+    const uint64_t current = static_cast<uint64_t>(tc->getReg(reg));
+    const uint64_t updated = current ^ (uint64_t(1) << bit_index);
+    tc->setReg(reg, updated);
+    return updated;
 }
 
 } // namespace gem5

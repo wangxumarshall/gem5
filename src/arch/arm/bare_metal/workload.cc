@@ -46,34 +46,15 @@ BareMetalWorkload::initState()
 {
     SEWorkload::initState();
 
-    // Get entry point from the first process via ThreadContext
-    ThreadContext *tc = system->threads[0];
-    Process *proc = tc->getProcessPtr();
-
-    // CRITICAL: Call the Process subclass's initState() explicitly
-    // This ensures ArmBareMetalProcess64::initState() is called which maps pages
-    proc->initState();
-
-    // Get entry after process initState (in case it changes)
-    Addr entry = proc->objFile->entryPoint();
-
-    // Set PC via ArmPCState
-    ArmISA::PCState pc;
-    pc.pc(entry);
-    // FIX: Set AArch64 bit for ARM64 bare-metal binaries so the decoder
-    // dispatches to AArch64 decode path (case 0x1: in the AARCH64 switch).
-    // ArmBareMetalProcess64::initState() skips ArmProcess64::initState()
-    // which normally sets this bit, so we must set it here.
-    pc.aarch64(dynamic_cast<ArmBareMetalProcess64 *>(proc) != nullptr);
-    pc.nextAArch64(pc.aarch64());
-    tc->pcState(pc);
-
-    // Activate first thread, suspend others
-    for (auto *tc: system->threads) {
-        if (tc->contextId() == 0) {
-            tc->activate();
+    // At this point, Process::initState() has already been called
+    // (via the SimObject startup sequence) which invoked our
+    // ArmBareMetalProcess64::initState() which already set the PC.
+    // Only activate threads here; do NOT set PC again.
+    for (auto *t : system->threads) {
+        if (t->contextId() == 0) {
+            t->activate();
         } else {
-            tc->suspend();
+            t->suspend();
         }
     }
 }
@@ -109,9 +90,11 @@ class BareMetalLoader : public Process::Loader
             return nullptr;
         }
 
-        // Only handle truly bare-metal binaries (no OS, or explicit bare-metal)
-        // If it's Linux, FreeBSD, or other OS — let the appropriate loader handle it
-        if (opsys != loader::UnknownOpSys)
+        // Accept bare-metal binaries (UnknownOpSys) AND static UNIX System V
+        // ELFs (aarch64-elf-gcc sets OSABI=SYSV even for bare-metal targets).
+        // These are static ELFs with no interpreter, so they run without a kernel.
+        // Reject only Linux/FreeBSD/etc. where a kernel is expected.
+        if (opsys == loader::Linux || opsys == loader::FreeBSD)
             return nullptr;
 
         // Bare-metal ELF should have no interpreter (static binary)

@@ -234,6 +234,22 @@ class ArmSystem : public System
     bool haveSemihosting() const { return semihosting != nullptr; }
 
     /**
+     * Read an AArch64 integer register by user-facing name for a specific
+     * context. This is intended for Python-side fault injection control.
+     */
+    uint64_t readIntRegisterByName(ContextID context_id,
+                                   const std::string &reg_name) const;
+
+    /**
+     * Flip a bit in an AArch64 integer register for a specific context.
+     *
+     * @return The new register value after the flip.
+     */
+    uint64_t injectIntRegisterBitFlip(ContextID context_id,
+                                      const std::string &reg_name,
+                                      unsigned bit_index);
+
+    /**
      * Returns a valid ArmSystem pointer if using ARM ISA, it fails
      * otherwise.
      */

@@ -39,10 +39,13 @@ namespace ArmISA
 /**
  * ARM bare-metal process for SDC fuzzing.
  *
- * Unlike ArmProcess64 which sets Linux-style virtual addresses
- * (stack_base = 0x7fffff0000L), this class maps the stack into the
- * physical memory range (0x80000000) to work with bare-metal ELFs
- * that have no MMU/memory mapping support.
+ * BOTH classes (32 and 64-bit) bypass the Linux-style argsInit() which
+ * sets up virtual address ranges incompatible with physical-memory ELFs.
+ * Instead they:
+ *   1. Map ELF segments identity-mapped in the physical address space
+ *   2. Map a minimal stack at 0x80000000 (stack_base = max physical mem)
+ *   3. Set SP and PC to the bare-metal ELF entry point
+ *   4. Enable NEON/FP
  */
 class ArmBareMetalProcess32 : public ArmProcess32
 {
@@ -57,7 +60,13 @@ class ArmBareMetalProcess32 : public ArmProcess32
     uint64_t armHwcapImpl2() const override;
 };
 
-class ArmBareMetalProcess64 : public ArmProcess64
+/**
+ * Extends ArmProcess directly (NOT ArmProcess64) to avoid Linux-style
+ * argsInit() which sets up incompatible virtual addresses for bare-metal.
+ * Reimplements the minimal bare-metal init: load ELF, map segments and
+ * stack, set SP/PC, enable FP.
+ */
+class ArmBareMetalProcess64 : public ArmProcess
 {
   public:
     ArmBareMetalProcess64(const ProcessParams &params,
